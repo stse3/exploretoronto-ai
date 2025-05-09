@@ -1,0 +1,31 @@
+name: Scrape Toronto Events
+
+on:
+  schedule:
+    - cron: '0 7 * * *'  # Runs at 7 AM UTC daily
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'server/scraper/package.json'
+      
+      - name: Install dependencies
+        working-directory: ./server/scraper
+        run: npm ci
+      
+      - name: Run scraper
+        working-directory: ./server/scraper
+        run: node scraper.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

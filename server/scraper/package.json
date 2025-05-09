@@ -1,0 +1,13 @@
+{
+    "name": "toronto-events-scraper",
+    "version": "1.0.0",
+    "description": "Scraper for Toronto events",
+    "main": "scraper.js",
+    "scripts": {
+        "start": "node scraper.js"
+    },
+    "dependencies": {
+        "@supabase/supabase-js": "^2.20.0",
+        "puppeteer": "^24.8.2"
+    }
+}
