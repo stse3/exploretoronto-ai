@@ -1,31 +1,34 @@
-name: Scrape Toronto Events
+name: Toronto Events Scraper
 
 on:
   schedule:
-    - cron: '0 7 * * *'  # Runs at 7 AM UTC daily
-  workflow_dispatch:  # Allows manual triggering
+    - cron: '0 7 * * *'  # Run daily at 7:00 UTC
+  workflow_dispatch:  # Allow manual triggering
 
 jobs:
-  scrape:
+  scrape-and-classify:
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v2
       
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v2
         with:
           node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: 'server/scraper/package.json'
       
       - name: Install dependencies
-        working-directory: ./server/scraper
-        run: npm ci
+        run: npm install puppeteer @supabase/supabase-js axios
       
       - name: Run scraper
-        working-directory: ./server/scraper
-        run: node scraper.js
+        run: node server/src/scraper/scraper.js
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      
+      - name: Run classifier
+        run: node src/scraper/classify_events.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          NLP_SERVICE_URL: ${{ secrets.NLP_SERVICE_URL }}
