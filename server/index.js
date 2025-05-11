@@ -1,4 +1,5 @@
 // In index.js
+require('dotenv').config();
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const cors = require('cors');
@@ -15,11 +16,35 @@ const supabase = createClient(
 );
 
 // Middleware
+// In index.js - Modified CORS configuration
+
+
+
+// After (updated code):
 app.use(cors({
-  origin: process.env.VITE_FRONTEND_URL || 'http://localhost:5173',
+  // Allow requests from both the frontend and testing environments
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, or Postman)
+    if (!origin) return callback(null, true);
+    
+    // List of allowed origins
+    const allowedOrigins = [
+      process.env.VITE_FRONTEND_URL || 'http://localhost:5173', // Frontend
+      'http://localhost:5001',                                   // Same origin
+      'http://localhost:8000'                                    // NLP service
+    ];
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type'],
+  allowedHeaders: ['Content-Type', 'Origin'],
+  credentials: true  // Allow credentials
 }));
+
 app.use(express.json());
 
 // Modified recommend endpoint to use getEventScore
@@ -162,7 +187,7 @@ app.post('/recommend', async (req, res) => {
 // Other endpoints remain the same...
 
 // Start the server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });

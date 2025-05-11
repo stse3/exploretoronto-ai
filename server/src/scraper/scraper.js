@@ -1,4 +1,5 @@
 // scraper/scraper.js
+require('dotenv').config();
 const puppeteer = require('puppeteer');
 const { createClient } = require('@supabase/supabase-js');
 
@@ -10,18 +11,17 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Date formatting helper
-const formatDate = (date) => {
-    const month = date.getMonth() + 1;
-    const day = date.getDate();
-    const year = date.getFullYear();
-    return `${month}/${day}/${year}`;
-};
-
 const extractBlogTOEvents = async () => {
     console.log('Starting BlogTO event scraper...');
+    // Start the timer at the beginning of the scraping process
+    const startTime = new Date();
     
     const url = 'https://www.blogto.com/events/';
+    
+    // Initialize stats variables at the function scope
+    let inserted = 0;
+    let updated = 0;
+    let errors = 0;
     
     console.log('Launching browser...');
     const browser = await puppeteer.launch({
@@ -32,63 +32,78 @@ const extractBlogTOEvents = async () => {
     const page = await browser.newPage();
     
     try {
-        // Track all unique events across dates
-        const uniqueEvents = new Map();
+        console.log('Navigating to BlogTO events page...');
+        await page.goto(url, { waitUntil: 'networkidle2' });
+        console.log('Page loaded successfully.');
         
-        // Configure how many days to scrape
-        const daysToScrape = 7; // Scrape a week of events
+        // Wait for dynamic content to load
+        console.log('Waiting for dynamic content to load...');
+        await sleep(2000);
         
-        for (let dayOffset = 0; dayOffset < daysToScrape; dayOffset++) {
-            // Calculate the date to scrape
-            const targetDate = new Date();
-            targetDate.setDate(targetDate.getDate() + dayOffset);
-            const formattedDate = formatDate(targetDate);
+        // Default date info in case date picker fails
+        let selectedDateInfo = null;
+        
+        // Look for the date picker
+        console.log('Looking for date picker...');
+        const hasDatePicker = await page.evaluate(() => {
+            return !!document.querySelector('.pika-button');
+        });
+        
+        if (hasDatePicker) {
+            console.log('Found date picker. Finding today or upcoming date...');
             
-            console.log(`\nScraping events for ${formattedDate}...`);
-            
-            // Navigate to events page (or refresh for subsequent days)
-            if (dayOffset === 0) {
-                console.log('Navigating to BlogTO events page...');
-                await page.goto(url, { waitUntil: 'networkidle2' });
-            } else {
-                console.log('Refreshing events page for new date...');
-                await page.goto(url, { waitUntil: 'networkidle2' });
-            }
-            
-            console.log('Page loaded successfully.');
-            
-            // Wait for dynamic content to load
-            await sleep(2000);
-            
-            // Select the target date
-            console.log('Selecting date in calendar...');
-            const selectedDateInfo = await page.evaluate((targetDateObj) => {
-                // Convert JS Date to date picker format
-                const year = targetDateObj.getFullYear();
-                const month = targetDateObj.getMonth(); // 0-based
-                const day = targetDateObj.getDate();
+            // Try to find and click on today's date or an upcoming date
+            selectedDateInfo = await page.evaluate(() => {
+                // Get today's date information
+                const today = new Date();
+                const currentYear = today.getFullYear();
+                const currentMonth = today.getMonth(); // 0-based (0 = January)
+                const currentDay = today.getDate();
                 
-                // Find the date button in the picker
-                const dateButton = document.querySelector(
-                    `.pika-button[data-pika-year="${year}"][data-pika-month="${month}"][data-pika-day="${day}"]`
-                );
+                // Try to find today's button first
+                let dateButton = document.querySelector(`.pika-button[data-pika-year="${currentYear}"][data-pika-month="${currentMonth}"][data-pika-day="${currentDay}"]`);
+                
+                // If not found, look for the closest upcoming date
+                if (!dateButton) {
+                    // Get all date buttons
+                    const dateButtons = Array.from(document.querySelectorAll('.pika-button'));
+                    
+                    for (const button of dateButtons) {
+                        const year = parseInt(button.getAttribute('data-pika-year'));
+                        const month = parseInt(button.getAttribute('data-pika-month'));
+                        const day = parseInt(button.getAttribute('data-pika-day'));
+                        
+                        const buttonDate = new Date(year, month, day);
+                        
+                        // If the date is today or in the future
+                        if (buttonDate >= today) {
+                            dateButton = button;
+                            break;
+                        }
+                    }
+                }
                 
                 // Click the button if found
                 if (dateButton) {
                     dateButton.click();
                     
+                    // Get the date information
+                    const year = dateButton.getAttribute('data-pika-year');
+                    const month = parseInt(dateButton.getAttribute('data-pika-month')) + 1; // Convert to 1-based
+                    const day = dateButton.getAttribute('data-pika-day');
+                    
                     return {
                         success: true,
-                        message: `Selected date: ${month + 1}/${day}/${year}`,
-                        date: `${month + 1}/${day}/${year}`
+                        message: `Selected date: ${month}/${day}/${year}`,
+                        date: `${month}/${day}/${year}`
                     };
                 }
                 
                 return {
                     success: false,
-                    message: 'Could not find the target date button'
+                    message: 'Could not find today or an upcoming date button'
                 };
-            }, targetDate);
+            });
             
             console.log(selectedDateInfo?.message || 'Date selection failed');
             
@@ -96,214 +111,140 @@ const extractBlogTOEvents = async () => {
                 // Wait for the page to update with filtered events
                 console.log('Waiting for page to update with filtered events...');
                 await sleep(3000);
-                
-                // Extract events for this date
-                console.log('Extracting event data...');
-                const events = await page.evaluate((dateInfo) => {
-                    const eventElements = document.querySelectorAll('.event-info-box-grid-item');
-                    const selectedDate = dateInfo.date;
-                    
-                    return Array.from(eventElements).map(eventElement => {
-                        // Extract title and link
-                        const titleLinkElement = eventElement.querySelector('.event-info-box-title-link');
-                        const title = titleLinkElement ? titleLinkElement.textContent.trim() : 'No title found';
-                        const link = titleLinkElement ? titleLinkElement.href : null;
-                        
-                        // Extract image
-                        const imageContainer = eventElement.querySelector('.event-info-box-picture');
-                        const imageElement = imageContainer ? imageContainer.querySelector('img') : null;
-                        const image = imageElement ? imageElement.src : null;
-                        
-                        // Extract location/venue
-                        const venueElement = eventElement.querySelector('.event-info-box-venue');
-                        let location = null;
-                        let venueLink = null;
-                        
-                        if (venueElement) {
-                            // Check for venue text element
-                            const venueTextElement = venueElement.querySelector('.event-info-box-venue-text');
-                            if (venueTextElement) {
-                                location = venueTextElement.textContent.trim();
-                            } else {
-                                // If no specific text element, use the venue element's text
-                                location = venueElement.textContent.trim();
-                            }
-                            
-                            // Check for venue link
-                            const venueLinkElement = venueElement.querySelector('a');
-                            if (venueLinkElement) {
-                                venueLink = venueLinkElement.href;
-                                // If no location text was found, use the link text
-                                if (!location || location === '') {
-                                    location = venueLinkElement.textContent.trim();
-                                }
-                            }
-                        }
-                        
-                        // Extract description
-                        const descriptionElement = eventElement.querySelector('.event-info-box-description');
-                        const description = descriptionElement ? 
-                                          descriptionElement.textContent.trim() : 
-                                          'No description found';
-                        
-                        // Extract time if available (BlogTO sometimes includes this)
-                        const timeElement = eventElement.querySelector('.event-info-box-time');
-                        const timeText = timeElement ? timeElement.textContent.trim() : null;
-                        
-                        // Attempt to parse start/end times
-                        let startTime = null;
-                        let endTime = null;
-                        
-                        if (timeText) {
-                            // Try to extract times using regex (format might vary)
-                            const timeMatch = timeText.match(/(\d{1,2}:\d{2}\s*[AP]M)\s*-\s*(\d{1,2}:\d{2}\s*[AP]M)/i);
-                            if (timeMatch) {
-                                startTime = timeMatch[1];
-                                endTime = timeMatch[2];
-                            } else {
-                                // If we couldn't parse a range, just store the whole time string
-                                startTime = timeText;
-                            }
-                        }
-                        
-                        // Extract price if available
-                        const priceElement = eventElement.querySelector('.event-info-box-price');
-                        const price = priceElement ? priceElement.textContent.trim() : null;
-                        
-                        return {
-                            title,
-                            link,
-                            image,
-                            date: selectedDate,
-                            location,
-                            venue_link: venueLink,
-                            description,
-                            start_time: startTime,
-                            end_time: endTime,
-                            price
-                        };
-                    });
-                }, selectedDateInfo);
-                
-                console.log(`Found ${events.length} events for ${selectedDateInfo.date}`);
-                
-                // Process events and merge multi-day events
-                for (const event of events) {
-                    if (!event.link) {
-                        console.log('Skipping event with no link');
-                        continue;
-                    }
-                    
-                    if (uniqueEvents.has(event.link)) {
-                        // This is a multi-day event - update its dates
-                        const existingEvent = uniqueEvents.get(event.link);
-                        
-                        // Initialize date_list if needed
-                        if (!existingEvent.date_list) {
-                            existingEvent.date_list = [existingEvent.date];
-                        }
-                        
-                        // Add this date if not already present
-                        if (!existingEvent.date_list.includes(event.date)) {
-                            existingEvent.date_list.push(event.date);
-                        }
-                        
-                        // Sort dates and update date range
-                        const sortedDates = [...existingEvent.date_list].sort((a, b) => {
-                            return new Date(a) - new Date(b);
-                        });
-                        
-                        existingEvent.date_list = sortedDates;
-                        existingEvent.date_range = sortedDates.length > 1 
-                            ? `${sortedDates[0]} - ${sortedDates[sortedDates.length - 1]}`
-                            : sortedDates[0];
-                    } else {
-                        // First time seeing this event
-                        uniqueEvents.set(event.link, {
-                            ...event,
-                            date_list: [event.date],
-                            date_range: event.date // Single date initially
-                        });
-                    }
-                }
-            } else {
-                console.log(`Skipping date ${formattedDate} due to selection failure`);
             }
+        } else {
+            console.log('No date picker found. Proceeding with default view.');
         }
         
-        console.log(`\nProcessed ${uniqueEvents.size} unique events across ${daysToScrape} days`);
+        // Extract all events data using the exact class names provided
+        console.log('Extracting event data using specified class names...');
+        const events = await page.evaluate((dateInfo) => {
+            const eventElements = document.querySelectorAll('.event-info-box-grid-item');
+            const selectedDate = dateInfo && dateInfo.success ? dateInfo.date : null;
+            
+            return Array.from(eventElements).map(eventElement => {
+                // Extract title and link using event-info-box-title-link
+                const titleLinkElement = eventElement.querySelector('.event-info-box-title-link');
+                const title = titleLinkElement ? titleLinkElement.textContent.trim() : 'No title found';
+                const link = titleLinkElement ? titleLinkElement.href : null;
+                
+                // Extract image using event-info-box-picture
+                const imageContainer = eventElement.querySelector('.event-info-box-picture');
+                const imageElement = imageContainer ? imageContainer.querySelector('img') : null;
+                const image = imageElement ? imageElement.src : null;
+                
+                // Extract location using event-info-box-venue
+                // Handle both text and link scenarios
+                const venueElement = eventElement.querySelector('.event-info-box-venue');
+                let location = null;
+                let venueLink = null;
+                
+                if (venueElement) {
+                    // Check for venue text element
+                    const venueTextElement = venueElement.querySelector('.event-info-box-venue-text');
+                    if (venueTextElement) {
+                        location = venueTextElement.textContent.trim();
+                    } else {
+                        // If no specific text element, use the venue element's text
+                        location = venueElement.textContent.trim();
+                    }
+                    
+                    // Check for venue link
+                    const venueLinkElement = venueElement.querySelector('a');
+                    if (venueLinkElement) {
+                        venueLink = venueLinkElement.href;
+                        // If no location text was found, use the link text
+                        if (!location || location === '') {
+                            location = venueLinkElement.textContent.trim();
+                        }
+                    }
+                }
+                
+                // Extract event time from event-info-box-date and split into start_time and end_time
+                const timeElement = eventElement.querySelector('.event-info-box-date');
+                let start_time = null;
+                let end_time = null;
+                
+                if (timeElement) {
+                    const timeText = timeElement.textContent.trim();
+                    // Parse times like "11:30 PM – 12:45 AM"
+                    const timeParts = timeText.split('–').map(part => part.trim());
+                    if (timeParts.length >= 1) {
+                        start_time = timeParts[0];
+                        // If there's an end time
+                        if (timeParts.length >= 2) {
+                            end_time = timeParts[1];
+                        }
+                    }
+                }
+                
+                // Extract description using event-info-box-description
+                const descriptionElement = eventElement.querySelector('.event-info-box-description');
+                const description = descriptionElement ? 
+                                  descriptionElement.textContent.trim() : 
+                                  'No description found';
+                
+                return {
+                    title,
+                    link,
+                    image,
+                    date: selectedDate,
+                    start_time,  // Using start_time instead of time
+                    end_time,    // Adding end_time
+                    location,
+                    venue_link: venueLink,
+                    description
+                };
+            });
+        }, selectedDateInfo);
         
-        // Convert Map to array and add metadata
-        const eventsToSave = Array.from(uniqueEvents.values()).map(event => ({
+        console.log(`Found ${events.length} events after filtering`);
+        
+        // Add metadata before saving
+        const eventsWithMetadata = events.map(event => ({
             ...event,
             source: 'blogto',
-            scraped_at: new Date().toISOString(),
-            processed: false,
-            categories: null // Initialize empty categories array
+            scraped_at: new Date().toISOString()
         }));
         
         // Save to Supabase
-        console.log('\nSaving events to Supabase...');
+        console.log('Saving events to Supabase...');
         
         // Track stats for reporting
-        let inserted = 0;
-        let updated = 0;
-        let errors = 0;
+        // Note: These variables are now declared at the function scope
         
         // Process each event
-        for (const event of eventsToSave) {
+        for (const event of eventsWithMetadata) {
+            // Skip events without links (they're our unique identifier)
+            if (!event.link) {
+                console.log('Skipping event with no link');
+                continue;
+            }
+            
             try {
                 // Check if event already exists
-                const { data: existingEvents, error: queryError } = await supabase
+                const { data: existingEvents } = await supabase
                     .from('events')
-                    .select('id, date, date_list, date_range')
+                    .select('id')
                     .eq('link', event.link)
                     .limit(1);
                 
-                if (queryError) throw queryError;
-                
                 if (existingEvents && existingEvents.length > 0) {
-                    const existingEvent = existingEvents[0];
-                    
-                    // Merge date information
-                    let combinedDateList = event.date_list || [event.date];
-                    
-                    if (existingEvent.date_list && existingEvent.date_list.length > 0) {
-                        // Combine and deduplicate dates
-                        combinedDateList = [...new Set([
-                            ...existingEvent.date_list,
-                            ...combinedDateList
-                        ])];
-                    }
-                    
-                    // Sort dates
-                    combinedDateList.sort((a, b) => new Date(a) - new Date(b));
-                    
-                    // Update event with merged date information
-                    const updateData = {
-                        ...event,
-                        date_list: combinedDateList,
-                        date_range: combinedDateList.length > 1 
-                            ? `${combinedDateList[0]} - ${combinedDateList[combinedDateList.length - 1]}`
-                            : combinedDateList[0],
-                        processed: false // Reset processed flag since we're updating
-                    };
-                    
                     // Update existing event
-                    const { error: updateError } = await supabase
+                    const { error } = await supabase
                         .from('events')
-                        .update(updateData)
-                        .eq('id', existingEvent.id);
+                        .update(event)
+                        .eq('link', event.link);
                     
-                    if (updateError) throw updateError;
+                    if (error) throw error;
                     updated++;
                 } else {
                     // Insert new event
-                    const { error: insertError } = await supabase
+                    const { error } = await supabase
                         .from('events')
                         .insert(event);
                     
-                    if (insertError) throw insertError;
+                    if (error) throw error;
                     inserted++;
                 }
             } catch (error) {
@@ -318,12 +259,37 @@ const extractBlogTOEvents = async () => {
         console.error('Error during extraction:', error);
     } finally {
         await browser.close();
-        console.log('Browser closed. Extraction complete.');
+        
+        // Calculate and log the total execution time
+        const endTime = new Date();
+        const executionTimeMs = endTime - startTime;
+        const executionTimeSec = (executionTimeMs / 1000).toFixed(2);
+        const executionTimeMin = (executionTimeMs / 60000).toFixed(2);
+        
+        console.log(`Browser closed. Extraction complete.`);
+        console.log(`Total execution time: ${executionTimeSec} seconds (${executionTimeMin} minutes)`);
+        
+        // Return the execution time for any calling function that needs it
+        return {
+            executionTimeMs,
+            executionTimeSec,
+            executionTimeMin,
+            stats: {
+                inserted,
+                updated,
+                errors
+            }
+        };
     }
 };
 
 // Run the scraper
 extractBlogTOEvents()
+    .then(result => {
+        if (result) {
+            console.log(`Scraper completed successfully! Processed ${result.stats.inserted + result.stats.updated} events in ${result.executionTimeSec} seconds.`);
+        }
+    })
     .catch(console.error)
     .finally(() => {
         console.log('Scraper execution finished');
