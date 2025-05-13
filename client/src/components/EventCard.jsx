@@ -1,58 +1,116 @@
-import { motion } from 'framer-motion';
+// EventCard.jsx
+import { motion } from 'framer-motion'; 
+import { Calendar, MapPin } from 'lucide-react';   
 
 export default function EventCard({ event, index }) {
   // Format date if available
-  const formatDate = (dateString) => {
-    if (!dateString) return "Date TBA";
-    return new Date(dateString).toLocaleDateString('en-US', {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+  const formatDate = () => {
+    try {
+      // Check if event.date exists and is valid
+      if (event.date) {
+        const formattedDate = new Date(event.date).toLocaleDateString('en-US', {
+          weekday: 'long',
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric',
+        });
+        return `${formattedDate} at ${event.start_time || '12:00 AM'}`;
+      }
+      // Fallback if date is missing
+      return `${event.start_time || 'Time TBD'}`;
+    } catch (error) {
+      // Safety fallback for any formatting errors
+      return 'Date and time TBD';
+    }
+  };
+  
+  // Simplified animation variants
+  const cardVariants = {
+    hidden: { opacity: 0, y: 20 },
+    visible: { 
+      opacity: 1, 
+      y: 0,
+      transition: { 
+        duration: 0.3,
+        delay: index * 0.05  // Reduced delay between cards
+      }
+    }
+  };
+
+  // Subtle hover effect for buttons
+  const buttonHoverEffect = {
+    scale: 1.01,
+    transition: { duration: 0.2 }
+  };
+  
+  const handleShare = () => {
+    if (navigator.share) {
+      navigator.share({
+        title: event.title || 'Event',
+        text: event.description || 'Check out this event!',
+        url: event.link || window.location.href,
+      }).catch((error) => console.error('Error sharing', error));
+    } else {
+      alert('Sharing is not supported in this browser.');
+    }
   };
   
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.1, duration: 0.5 }}
-      className="bg-white/10 backdrop-blur-md rounded-xl overflow-hidden shadow-lg hover:shadow-xl transition-shadow"
-    >
-      <div className="p-6">
-        <h3 className="text-xl font-bold text-white mb-2">{event.title}</h3>
+    variants={cardVariants}
+    initial="hidden"
+    animate="visible"
+    className="bg-white rounded-[40px] overflow-hidden border border-black relative" style={{ boxShadow: '5px 5px 0px 0px rgba(0,0,0,0.8)' }}
+  >
+      {/* Image section */}
+      {event.image && (
+        <div className="w-full p-4 overflow-hidden">
+          <img
+            src={event.image}
+            alt={event.title || 'Event'}
+            className="w-full rounded-[32px] border border-black"
+          />
+        </div>
+      )}
+      
+      <div className="px-4 pb-4 flex flex-col h-full text-black">
+        <h3 className="text-xl font-bold mb-2">
+          {event.title || 'Event Title'}
+        </h3>
         
-        <div className="flex items-center text-white/80 mb-4">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-          <span>{event.location || "Location TBA"}</span>
+        <div className="flex items-center text-sm mb-1">
+          <MapPin className="h-4 w-4 mr-1" />
+          <span>{event.location || "Japanese Canadian Cultural Centre"}</span>
         </div>
         
-        {event.date && (
-          <div className="flex items-center text-white/80 mb-4">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-            <span>{formatDate(event.date)}</span>
-          </div>
-        )}
+        <div className="flex items-center text-sm mb-3">
+          <Calendar className="h-4 w-4 mr-1" />
+          <span>{formatDate()}</span>
+        </div>
         
-        {event.description && (
-          <p className="text-white/90 mb-4 line-clamp-3">
-            {event.description}
-          </p>
-        )}
+        <p className="text-xs mb-4">
+          {event.description || 'The Japanese Canadian Cultural Centre (JCCC) is delighted to announce the launch of SakuraFest, an exciting new annual celebration that honours the cultural and seasonal'}
+        </p>
         
-        <motion.button
-          whileHover={{ scale: 1.03 }}
-          whileTap={{ scale: 0.97 }}
-          className="w-full bg-white/20 hover:bg-white/30 text-white py-2 rounded-lg transition-colors"
-        >
-          Learn More
-        </motion.button>
+        <div className="flex space-x-3 mt-2">
+          <motion.a 
+            href={event.link || "#"}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-1 px-3 py-1.5 text-xs font-medium rounded-full border border-black transition-all text-black text-center bg-white"
+            whileHover={buttonHoverEffect}
+          >
+            Learn More
+          </motion.a>
+          
+          <motion.button
+            onClick={handleShare}
+            className="flex-1 px-3 py-1.5 text-xs font-medium rounded-full transition-all text-white text-center bg-black"
+            whileHover={buttonHoverEffect}
+          >
+            Share
+          </motion.button>
+        </div>
       </div>
     </motion.div>
   );
